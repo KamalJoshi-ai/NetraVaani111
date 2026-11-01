@@ -383,5 +383,3 @@ npm --prefix frontend run build
 ## 12. License
 
 NetraVaani is developed under the **MIT License**.
-#   N e t r a V a a n i 1 1 1  
- 
