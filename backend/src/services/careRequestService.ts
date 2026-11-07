@@ -685,7 +685,7 @@ export class CareRequestService {
 
       const requireDispatchConfirm =
         !isEmergencyAction &&
-        (patientDoc ? patientDoc.confirmationSettings?.requireDispatchConfirmation !== false : Boolean(patientId));
+        Boolean(patientDoc?.confirmationSettings?.requireDispatchConfirmation === true);
 
       if (requireDispatchConfirm) {
         await CareRequest.deleteMany({

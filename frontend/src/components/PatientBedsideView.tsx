@@ -182,28 +182,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
 
-  // Pending Bedside Audio Dispatch Confirmation (Paused before nurse station)
-  const [pendingDispatchConfirm, setPendingDispatchConfirm] = useState<{
-    requestId: string;
-    action: string;
-    actionLabel?: string;
-    ruleId?: string;
-    speechPrompt?: string;
-    expiresAt?: string;
-    counts?: { eog: number; emgLeft: number; emgRight: number; together?: number };
-  } | null>(null);
-  const [dispatchCountdown, setDispatchCountdown] = useState<number>(15);
-  const [selectedLedgerTab, setSelectedLedgerTab] = useState<"ACTIVE_LEDGER" | "BEDSIDE_AUDIT">("ACTIVE_LEDGER");
-  const [bedsideAuditTrail, setBedsideAuditTrail] = useState<
-    {
-      id: string;
-      action: string;
-      timestamp: string;
-      status: "DISPATCHED_TO_NURSE" | "CANCELLED_AT_BEDSIDE";
-      note: string;
-      source: "PATIENT_YES" | "PATIENT_NO" | "TIMEOUT";
-    }[]
-  >([]);
+  
 
   // Audio & Microphone States (Bedside Audio integrated into Patient Terminal)
   const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
@@ -578,86 +557,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
     }
   };
 
-  // Handle Bedside Dispatch Confirmation (Confirm YES -> Dispatch to nurse)
-  const handleConfirmDispatch = useCallback(async () => {
-    if (!pendingDispatchConfirm) return;
-    setActionInProgress("confirm_dispatch");
-    try {
-      await apiClient.confirmDispatch(pendingDispatchConfirm.requestId);
-      playChime("success");
-      speak("Your request has been sent to the nurse.");
-      showNotice("✓ Request confirmed and dispatched to Nurse Dashboard.");
-      setBedsideAuditTrail((prev) => [
-        {
-          id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-          action: pendingDispatchConfirm.actionLabel || pendingDispatchConfirm.action,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          status: "DISPATCHED_TO_NURSE",
-          note: "Allowed by patient via YES gesture (3–4 blinks) & Audited to Nurse Dashboard",
-          source: "PATIENT_YES",
-        },
-        ...prev,
-      ]);
-      setPendingDispatchConfirm(null);
-      if (patient?.patientCode) {
-        const reqRes = await apiClient.getCareRequests({ patientCode: patient.patientCode, limit: 50 });
-        if (reqRes?.data) setRequests(reqRes.data);
-      }
-    } catch (err: unknown) {
-      showNotice(err instanceof Error ? err.message : "Failed to confirm dispatch", true);
-    } finally {
-      setActionInProgress(null);
-    }
-  }, [pendingDispatchConfirm, patient?.patientCode, playChime, speak]);
-
-  // Handle Bedside Dispatch Cancellation (Cancel NO -> Purge, do not send to nurse)
-  const handleCancelDispatch = useCallback(async () => {
-    if (!pendingDispatchConfirm) return;
-    setActionInProgress("cancel_dispatch");
-    try {
-      await apiClient.cancelDispatch(pendingDispatchConfirm.requestId);
-      playChime("alert");
-      speak("Request cancelled.");
-      showNotice("✕ Request cancelled and withheld from Nurse Dashboard.");
-      setBedsideAuditTrail((prev) => [
-        {
-          id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-          action: pendingDispatchConfirm.actionLabel || pendingDispatchConfirm.action,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          status: "CANCELLED_AT_BEDSIDE",
-          note: "Cancelled by patient via NO gesture (both hands together) & Withheld from Nurse Dashboard",
-          source: "PATIENT_NO",
-        },
-        ...prev,
-      ]);
-      setPendingDispatchConfirm(null);
-      if (patient?.patientCode) {
-        const reqRes = await apiClient.getCareRequests({ patientCode: patient.patientCode, limit: 50 });
-        if (reqRes?.data) setRequests(reqRes.data);
-      }
-    } catch (err: unknown) {
-      showNotice(err instanceof Error ? err.message : "Failed to cancel dispatch", true);
-    } finally {
-      setActionInProgress(null);
-    }
-  }, [pendingDispatchConfirm, patient?.patientCode, playChime, speak]);
-
-  // Countdown timer for dispatch confirmation
-  useEffect(() => {
-    if (!pendingDispatchConfirm) return;
-    const interval = setInterval(() => {
-      setDispatchCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          handleCancelDispatch();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [pendingDispatchConfirm, handleCancelDispatch]);
+  
 
   const activeRequest = useMemo(() => {
     return requests.find((r) => r.status !== "RESOLVED" && r.status !== "CANCELLED");
@@ -702,19 +602,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
     const devId = patient?.currentAssignment?.device?.deviceId || "npg-bedside-sim";
     setActionInProgress(`trigger_${ruleId}`);
     try {
-      // 1. If dispatch confirmation is active, evaluate YES / NO gestures directly
-      if (pendingDispatchConfirm) {
-        if (ruleId === "yes" || (counts.eog >= 3 && counts.eog <= 4 && counts.emgLeft === 0 && counts.emgRight === 0)) {
-          await handleConfirmDispatch();
-          return;
-        }
-        if (ruleId === "no" || ((counts.together || 0) >= 1 || (counts.emgLeft >= 1 && counts.emgRight >= 1))) {
-          await handleCancelDispatch();
-          return;
-        }
-      }
-
-      // 2. If active request is awaiting patient confirmation, evaluate YES / NO gestures directly
+      // 1. If active request is awaiting patient confirmation, evaluate YES / NO gestures directly
       if (
         activeRequest?.status === "AWAITING_CONFIRMATION" ||
         activeRequest?.status === "PENDING_PATIENT_CONFIRMATION" ||
@@ -744,14 +632,14 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
       if (isYesSignal) {
         playChime("prompt");
         speak("YES acknowledged. There are no active prompts to confirm.");
-        showNotice("YES acknowledged. Use this gesture when a dispatch or care confirmation prompt appears.");
+        showNotice("YES acknowledged. Use this gesture when the attending nurse requests care confirmation.");
         return;
       }
 
       if (isNoSignal) {
         playChime("alert");
         speak("NO acknowledged. There are no active prompts to cancel.");
-        showNotice("NO acknowledged. Use this gesture when cancelling a dispatch prompt.");
+        showNotice("NO acknowledged. Use this gesture when indicating more assistance is required.");
         return;
       }
 
@@ -772,26 +660,9 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
         urgent: isUrgent,
       });
 
-      const cr = (res.data as any)?.careRequest || res.data;
-      if (cr?.status === "PENDING_DISPATCH_CONFIRMATION") {
-        const prompt = `You asked for ${cr.label || cr.action}. Blink 3 to 4 times for YES to send to nurse, or squeeze both hands together 1 to 2 times for NO to cancel.`;
-        setPendingDispatchConfirm({
-          requestId: String(cr._id),
-          action: cr.action,
-          actionLabel: cr.label || cr.action,
-          ruleId,
-          speechPrompt: prompt,
-          expiresAt: cr.confirmationExpiresAt,
-          counts,
-        });
-        setDispatchCountdown(15);
-        playChime("prompt");
-        speak(prompt);
-      } else if (cr?.status === "NEW") {
-        playChime("success");
-        speak("Your request has been sent to the nurse.");
-        showNotice(`✓ ${action} dispatched to Nurse Dashboard.`);
-      }
+      playChime("success");
+      speak("Your request has been sent to the nurse.");
+      showNotice(`✓ ${action} dispatched to Nurse Dashboard.`);
       if (patient?.patientCode) {
         const reqRes = await apiClient.getCareRequests({ patientCode: patient.patientCode, limit: 50 });
         if (reqRes?.data) setRequests(reqRes.data);
@@ -804,11 +675,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
   }, [
     patient?.currentAssignment?.device?.deviceId,
     patient?.patientCode,
-    pendingDispatchConfirm,
-    activeRequest?.status,
-    handleConfirmDispatch,
-    handleCancelDispatch,
-    handlePatientConfirm,
+    activeRequest?.status, handlePatientConfirm,
     playChime,
     speak,
     setRequests,
@@ -848,64 +715,20 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
     es.onmessage = async (evt) => {
       try {
         const payload = JSON.parse(evt.data);
-        if (payload.type === "DISPATCH_CONFIRMATION_REQUESTED") {
-          playChime("prompt");
-          const prompt = payload.speechPrompt || `You asked for ${payload.actionLabel || payload.action}. Blink 3 to 4 times for YES to send to nurse, or squeeze both hands together 1 to 2 times for NO to cancel.`;
-          speak(prompt);
-          setPendingDispatchConfirm({
-            requestId: payload.requestId,
-            action: payload.action,
-            actionLabel: payload.actionLabel || payload.action,
-            ruleId: payload.ruleId,
-            speechPrompt: prompt,
-            expiresAt: payload.expiresAt,
-            counts: payload.counts,
-          });
-          setDispatchCountdown(15);
-        } else if (payload.type === "REQUEST_DISPATCHED") {
+        if (payload.type === "REQUEST_DISPATCHED") {
           playChime("success");
           speak(payload.speechPrompt || "Your request has been sent to the nurse.");
-          setPendingDispatchConfirm((prev) => {
-            if (prev && prev.requestId === payload.requestId) return null;
-            return prev;
-          });
           if (code) {
             const reqRes = await apiClient.getCareRequests({ patientCode: code, limit: 50 });
             if (reqRes?.data) setRequests(reqRes.data);
           }
-          setBedsideAuditTrail((prev) => [
-            {
-              id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-              action: payload.actionLabel || payload.action || "Care Call",
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-              status: "DISPATCHED_TO_NURSE",
-              note: "Allowed by patient via YES gesture & Dispatched to Nurse Dashboard",
-              source: "PATIENT_YES",
-            },
-            ...prev,
-          ]);
         } else if (payload.type === "REQUEST_CANCELLED") {
           playChime("alert");
           speak(payload.speechPrompt || "Request cancelled.");
-          setPendingDispatchConfirm((prev) => {
-            if (prev && prev.requestId === payload.requestId) return null;
-            return prev;
-          });
           if (code) {
             const reqRes = await apiClient.getCareRequests({ patientCode: code, limit: 50 });
             if (reqRes?.data) setRequests(reqRes.data);
           }
-          setBedsideAuditTrail((prev) => [
-            {
-              id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-              action: payload.actionLabel || payload.action || "Care Call",
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-              status: "CANCELLED_AT_BEDSIDE",
-              note: "Cancelled by patient via NO gesture & Purged from Nurse Dashboard",
-              source: "PATIENT_NO",
-            },
-            ...prev,
-          ]);
         } else if (payload.type === "PATIENT_CONFIRMATION_REQUESTED") {
           playChime("prompt");
           const prompt =
@@ -954,10 +777,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
             ruleIdLower === "no" ||
             (payload.counts && ((payload.counts.together || 0) >= 1 || (payload.counts.emgLeft >= 1 && payload.counts.emgRight >= 1)));
 
-          if (pendingDispatchConfirm) {
-            if (isYes) handleConfirmDispatch();
-            else if (isNo) handleCancelDispatch();
-          } else if (activeRequest?.status === "AWAITING_CONFIRMATION" || activeRequest?.status === "PENDING_PATIENT_CONFIRMATION") {
+          if (activeRequest?.status === "AWAITING_CONFIRMATION" || activeRequest?.status === "PENDING_PATIENT_CONFIRMATION") {
             if (isYes) handlePatientConfirm(true);
             else if (isNo) handlePatientConfirm(false);
           }
@@ -970,7 +790,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
     return () => {
       es.close();
     };
-  }, [patient?.patientCode, patient?.currentAssignment?.device?.deviceId, playChime, speak, pendingDispatchConfirm, activeRequest?.status, handleConfirmDispatch, handleCancelDispatch, handlePatientConfirm]);
+  }, [patient?.patientCode, patient?.currentAssignment?.device?.deviceId, playChime, speak, activeRequest?.status, handlePatientConfirm, setRequests]);
 
   // Continuous Speech Recognition Engine for Bedside Voice Commands
   useEffect(() => {
@@ -1008,20 +828,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
 
         const lower = transcript.toLowerCase();
 
-        // 1. If pending dispatch confirmation (allowance before nurse station):
-        if (pendingDispatchConfirm) {
-          if (lower.includes("yes") || lower.includes("confirm") || lower.includes("allow") || lower.includes("send")) {
-            handleConfirmDispatch();
-            return;
-          }
-          if (lower.includes("no") || lower.includes("cancel") || lower.includes("stop") || lower.includes("reject")) {
-            handleCancelDispatch();
-            return;
-          }
-          return;
-        }
-
-        // 2. If nurse requested patient confirmation:
+        // 1. If nurse requested patient confirmation:
         if (activeRequest?.status === "AWAITING_CONFIRMATION" || activeRequest?.status === "PENDING_PATIENT_CONFIRMATION") {
           if (lower.includes("yes") || lower.includes("confirm") || lower.includes("received") || lower.includes("done") || lower.includes("assisted")) {
             handlePatientConfirm(true);
@@ -1034,7 +841,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
           return;
         }
 
-        // 3. Otherwise: parse voice command (Water, Call Nurse, Adjustment, Emergency)
+        // 2. Otherwise: parse voice command (Water, Call Nurse, Adjustment, Emergency)
         const recognized = parseSpokenCommand(transcript);
         if (recognized) {
           const ruleId = recognized.ruleId;
@@ -1076,7 +883,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
         } catch {}
       }
     };
-  }, [isMicActive, pendingDispatchConfirm, activeRequest?.status, handleConfirmDispatch, handleCancelDispatch, handlePatientConfirm, handleTriggerGesture]);
+  }, [isMicActive, activeRequest?.status, handlePatientConfirm, handleTriggerGesture]);
 
   // Strict Assignment Gating Conditions
   const hasConfirmedBed = Boolean(
@@ -1601,134 +1408,10 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
 
           </div>
 
-          {/* SECTION 3: BEDSIDE AUDIO DISPATCH GATE & GESTURE COMMANDS */}
+          {/* SECTION 3: BEDSIDE GAZE & GESTURE COMMANDS */}
           <div className="space-y-6">
 
-            {/* BEDSIDE AUDIO DISPATCH GATE (Audio Pauses Before Nurse Station) */}
-            {pendingDispatchConfirm ? (
-              <section className="card-white rounded-3xl p-6 sm:p-7 shadow-2xl border-2 border-cyan-500/40 bg-gradient-to-br from-white via-cyan-500/[0.04] to-white space-y-5 animate-pulse-slow">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cyan-500/15 pb-4">
-                  <div className="flex items-center gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-cyan-600 text-white flex items-center justify-center shadow-lg shadow-cyan-600/25 shrink-0">
-                      <Volume2 className="w-6 h-6 animate-bounce" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-base sm:text-lg font-heading font-extrabold text-[#0B1E28] tracking-tight">
-                          Bedside Audio Gate: Confirm Command Dispatch
-                        </h2>
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-950 border border-amber-500/30 uppercase animate-pulse">
-                          ALLOWANCE REQUIRED
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#52575C] mt-0.5 font-medium">
-                        Command nurse dashboard me aane se phle bedside audio me verification maang raha hai
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 self-start sm:self-auto">
-                    <div className="px-3.5 py-1.5 rounded-full bg-[#081B26] text-cyan-300 font-mono text-xs font-bold flex items-center gap-2 shadow-xs border border-cyan-500/30">
-                      <Clock className="w-3.5 h-3.5 animate-spin" />
-                      <span>Expires in: {dispatchCountdown}s</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-[#081B26] text-white p-5 rounded-2xl border border-cyan-500/30 shadow-md space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <span className="text-xs text-cyan-300/80 font-mono uppercase tracking-wider">
-                      Detected Patient Command
-                    </span>
-                    <span className="font-mono text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                      Request ID: {pendingDispatchConfirm.requestId.slice(-6)}
-                    </span>
-                  </div>
-                  <div className="text-2xl sm:text-3xl font-heading font-extrabold text-white tracking-tight flex items-center gap-3">
-                    <span>{pendingDispatchConfirm.actionLabel || pendingDispatchConfirm.action}</span>
-                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
-                  </div>
-                  <p className="text-xs text-slate-300 font-medium leading-relaxed">
-                    Kya aap ye command nurse dashboard me bhejna chahte hain? Confirm karne ke liye <strong>YES</strong> gesture karein ya Cancel karne ke liye <strong>NO</strong> gesture karein.
-                  </p>
-                </div>
-
-                {/* YES and NO Action Choices (Strictly as per Image) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                  {/* YES Option */}
-                  <div className="p-4 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/30 hover:border-emerald-500/60 transition flex flex-col justify-between space-y-3 shadow-xs">
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono font-bold text-emerald-950 uppercase tracking-wider">
-                          YES Gesture (Allow)
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-950">
-                          3–4 Blinks (EOG)
-                        </span>
-                      </div>
-                      <p className="text-xs text-emerald-900 font-medium mt-1">
-                        Blink 3 to 4 times to approve this command. It will be dispatched immediately to the Nurse Station ledger.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={actionInProgress !== null}
-                      onClick={handleConfirmDispatch}
-                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>{actionInProgress === "confirm_dispatch" ? "Dispatching..." : "Allow & Send to Nurse (YES)"}</span>
-                    </button>
-                  </div>
-
-                  {/* NO Option */}
-                  <div className="p-4 rounded-2xl bg-rose-500/10 border-2 border-rose-500/30 hover:border-rose-500/60 transition flex flex-col justify-between space-y-3 shadow-xs">
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono font-bold text-rose-950 uppercase tracking-wider">
-                          NO Gesture (Cancel)
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-950">
-                          Both Hands Together ×1–2 (EMG)
-                        </span>
-                      </div>
-                      <p className="text-xs text-rose-900 font-medium mt-1">
-                        Squeeze both hands together 1 to 2 times to cancel. The command will be purged and NEVER sent to the nurse.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={actionInProgress !== null}
-                      onClick={handleCancelDispatch}
-                      className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition disabled:opacity-50"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>{actionInProgress === "cancel_dispatch" ? "Cancelling..." : "Cancel Request (NO)"}</span>
-                    </button>
-                  </div>
-                </div>
-              </section>
-            ) : (
-              <div className="p-4 rounded-2xl bg-white border border-cyan-500/20 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-cyan-500/15 text-cyan-800 flex items-center justify-center shrink-0">
-                    <Volume2 className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="font-heading font-bold text-[#0B1E28] flex items-center gap-2">
-                      <span>Bedside Audio Dispatch Gate</span>
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    </span>
-                    <span className="text-[#686D73] block mt-0.5">
-                      Commands triggered via gestures pause here for verbal &amp; gesture allowance before reaching the nurse dashboard.
-                    </span>
-                  </div>
-                </div>
-                <span className="px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-900 font-mono text-[10px] font-bold uppercase self-start sm:self-auto border border-cyan-500/20">
-                  AUDIO GATE READY
-                </span>
-              </div>
-            )}
+            
 
             {/* BEDSIDE GAZE & GESTURE COMMANDS (Strictly In Image) */}
             <section className="card-white rounded-3xl p-6 sm:p-7 shadow-xl border border-cyan-500/10 space-y-4">
@@ -1872,81 +1555,9 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   One patient can have only one active request at a time until completed by your nurse
                 </p>
               </div>
-
-              {/* Tabs for Active Ledger vs Bedside Dispatch Audit Log */}
-              <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-black/5 border border-black/5">
-                <button
-                  type="button"
-                  onClick={() => setSelectedLedgerTab("ACTIVE_LEDGER")}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    selectedLedgerTab === "ACTIVE_LEDGER"
-                      ? "bg-white text-[#0B1E28] shadow-xs"
-                      : "text-[#686D73] hover:text-[#0B1E28]"
-                  }`}
-                >
-                  Active Calls ({requests.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedLedgerTab("BEDSIDE_AUDIT")}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-                    selectedLedgerTab === "BEDSIDE_AUDIT"
-                      ? "bg-[#081B26] text-white shadow-xs"
-                      : "text-[#686D73] hover:text-[#0B1E28]"
-                  }`}
-                >
-                  <span>Bedside Audit Log</span>
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-cyan-500/20 text-cyan-300 font-mono">
-                    {bedsideAuditTrail.length}
-                  </span>
-                </button>
-              </div>
             </div>
 
-            {selectedLedgerTab === "BEDSIDE_AUDIT" ? (
-              <div className="divide-y divide-black/5 max-h-[400px] overflow-y-auto pr-1">
-                {bedsideAuditTrail.length === 0 ? (
-                  <div className="py-10 text-center text-xs text-[#8E9298]">
-                    <Shield className="w-8 h-8 text-cyan-600 mx-auto mb-2 opacity-80" />
-                    No bedside dispatch audits recorded yet in this session.
-                    Allowed and cancelled commands will be audited here in real-time.
-                  </div>
-                ) : (
-                  bedsideAuditTrail.map((audit) => (
-                    <div key={audit.id} className="py-3.5 flex items-center justify-between gap-3 text-xs hover:bg-black/[0.01] px-2 rounded-2xl transition">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                            audit.status === "DISPATCHED_TO_NURSE" ? "bg-emerald-500" : "bg-rose-500"
-                          }`}
-                        />
-                        <div>
-                          <div className="font-heading font-bold text-sm text-[#0B1E28] flex items-center gap-2">
-                            <span>{audit.action}</span>
-                            <span className="text-[10px] font-mono text-[#686D73]">({audit.timestamp})</span>
-                          </div>
-                          <div className="text-[11px] text-[#52575C] mt-0.5">
-                            {audit.note}
-                          </div>
-                        </div>
-                      </div>
-
-                      <span
-                        className={`px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider ${
-                          audit.status === "DISPATCHED_TO_NURSE"
-                            ? "bg-emerald-500/15 text-emerald-900 border border-emerald-500/30"
-                            : "bg-rose-500/15 text-rose-900 border border-rose-500/30"
-                        }`}
-                      >
-                        {audit.status === "DISPATCHED_TO_NURSE" ? "ALLOWED & SENT (YES)" : "CANCELLED AT BEDSIDE (NO)"}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : (
-              <>
-                {/* UNIFIED SINGLE ACTIVE REQUEST CARD */}
+            <>{/* UNIFIED SINGLE ACTIVE REQUEST CARD */}
                 {activeRequest ? (
                   <div
                     className={`p-5 rounded-3xl border shadow-lg space-y-3.5 transition-all ${
@@ -2119,7 +1730,6 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   )}
                 </div>
               </>
-            )}
           </section>
 
         </main>

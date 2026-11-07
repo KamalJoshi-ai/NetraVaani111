@@ -112,7 +112,7 @@ const PatientConfirmationSettingsSchema = new Schema<IPatientConfirmationSetting
     },
     requireDispatchConfirmation: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     dispatchExpiresInSeconds: {
       type: Number,

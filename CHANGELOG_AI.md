@@ -82,6 +82,42 @@ Note: Recording requirements does not mean implementation is complete.
 
 ## 4. Feature Implementation Log
 
+### Feature: Direct Gesture Dispatch & Full End-to-End Nurse-Patient Event Simulation
+Date: 2026-11-07
+Status: Completed
+
+#### Objective
+1. Remove all pre-dispatch confirmation gates, allowance dialogs, and verbal verification questions ("Kya aap ye command nurse dashboard me bhejna chahte hain?") from the patient interface.
+2. Ensure that whenever a patient triggers a gesture or audio command (WATER, CALL NURSE, ADJUSTMENT, EMERGENCY), it directly dispatches immediately to the Nurse Dashboard with zero friction.
+3. Preserve the medical closed-loop post-care verification (`AWAITING_CONFIRMATION` -> YES / NO) when an attending nurse attends to the patient and explicitly requests care confirmation.
+4. Simulate the entire end-to-end lifecycle between the patient bedside terminal and the nurse station.
+
+#### Changes implemented
+- `backend/src/models/Patient.ts`:
+  - Changed `requireDispatchConfirmation` default from `true` to `false`.
+- `backend/src/services/careRequestService.ts`:
+  - Updated dispatch check: `const requireDispatchConfirm = !isEmergencyAction && Boolean(patientDoc?.confirmationSettings?.requireDispatchConfirmation === true);`. All incoming patient gestures bypass pre-dispatch confirmation and are immediately created with `status: "NEW"` and broadcast to the nurse ledger.
+- `frontend/src/components/PatientBedsideView.tsx`:
+  - Removed all pre-dispatch gate UI and states (`pendingDispatchConfirm`, `dispatchCountdown`, `handleConfirmDispatch`, allowance gate JSX).
+  - Configured `handleTriggerGesture` to directly dispatch the device event via `apiClient.sendDeviceEvent`, playing the chime and announcing "Your request has been sent to the nurse."
+  - Updated gesture notices to clearly indicate that YES/NO are reserved for when the attending nurse requests care confirmation.
+- `backend/tests/fullEventSimulation.test.ts`:
+  - Created comprehensive end-to-end simulation test verifying:
+    - Step 1: Patient gesture triggers direct creation of `status: "NEW"` without asking patient again.
+    - Step 2: Nurse Dashboard fetches and displays the active call in the ledger.
+    - Step 3: Nurse acknowledges (`ACKNOWLEDGED`) and begins care (`IN_PROGRESS`).
+    - Step 4: Nurse completes care and requests confirmation (`AWAITING_CONFIRMATION`).
+    - Step 5: Patient performs YES gesture (3-4 blinks) -> status updates to `CONFIRMED`.
+    - Step 6: Nurse completes resolution (`RESOLVED`).
+    - Step 7: Patient terminal unlocks for subsequent requests.
+    - Rejection simulation: Patient NO gesture transitions request to `FOLLOW_UP_REQUIRED`.
+    - Emergency simulation: Emergency gesture dispatches immediately with `urgent: true` and `alarm: true`.
+
+#### Verification
+- `npm --prefix frontend run typecheck`: Passed (exit code 0).
+- `npm --prefix backend test`: 16/16 test files passed, 208/208 tests passed (exit code 0).
+
+
 ### Feature: Dashboard High-Contrast Black Text Enforcement & CSS Scoping Isolation
 Date: 2026-11-01
 Status: Completed
